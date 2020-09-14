@@ -8,7 +8,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Automation;
 using System.Windows.Forms;
+
 using CenterTaskbar.Properties;
+
 using Microsoft.Win32;
 
 namespace CenterTaskbar
@@ -75,18 +77,58 @@ namespace CenterTaskbar
         private readonly Dictionary<AutomationElement, Task> _positionThreads =
             new Dictionary<AutomationElement, Task>();
 
+        public int TargetPosOffset
+        {
+            get => _targetPosOffset;
+            set
+            {
+                _targetPosOffset = value;
+                _targetPosOffsetChanged = true;
+            }
+        }
+        private int _targetPosOffset = 0;
+        private bool _targetPosOffsetChanged = false;
+
         public TrayApplication(IReadOnlyList<string> args)
         {
-            if (args.Count > 0)
-                try
+            bool argsErrorCount = false;
+            for (int i = 0; i < args.Count; i++)
+            {
+                switch (args[i].ToLower())
                 {
-                    _activeFramerate = int.Parse(args[0]);
-                    Debug.WriteLine("Active refresh rate: " + _activeFramerate);
+                    case "-framerate":
+                        if (int.TryParse(args[i + 1], out int activeFramerate))
+                        {
+                            _activeFramerate = activeFramerate;
+                            Debug.WriteLine("Active refresh rate: " + _activeFramerate);
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"Active refresh rate argument error: {args[i + 1]}");
+                            argsErrorCount = true;
+                        }
+                        i++;
+                        break;
+                    case "-offset":
+                        if (int.TryParse(args[i + 1], out int offset))
+                        {
+                            TargetPosOffset = offset;
+                            Debug.WriteLine($"Offset: {offset}");
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"Offset argument error: {args[i + 1]}");
+                            argsErrorCount = true;
+                        }
+                        i++;
+                        break;
                 }
-                catch (FormatException e)
+                if (argsErrorCount)
                 {
-                    Debug.WriteLine(e.Message);
+                    Debug.WriteLine($"Argument is wrong: {args[i - 1]}");
+                    break;
                 }
+            }
 
             var header = new MenuItem("CenterTaskbar (" + _activeFramerate + ")", Exit)
             {
@@ -123,12 +165,12 @@ namespace CenterTaskbar
             if (IsApplicationInStartup())
             {
                 RemoveApplicationFromStartup();
-                ((MenuItem) sender).Checked = false;
+                ((MenuItem)sender).Checked = false;
             }
             else
             {
                 AddApplicationToStartup();
-                ((MenuItem) sender).Checked = true;
+                ((MenuItem)sender).Checked = true;
             }
         }
 
@@ -208,7 +250,7 @@ namespace CenterTaskbar
                 return;
             }
 
-            var taskListPtr = (IntPtr) taskList.Current.NativeWindowHandle;
+            var taskListPtr = (IntPtr)taskList.Current.NativeWindowHandle;
 
             SetWindowPos(taskListPtr, IntPtr.Zero, 0, 0, 0, 0, SWP_NOZORDER | SWP_NOSIZE | SWP_ASYNCWINDOWPOS);
         }
@@ -266,7 +308,7 @@ namespace CenterTaskbar
         private void OnUIAutomationEvent(object src, AutomationEventArgs e)
         {
             Debug.Print("Event occured: {0}", e.EventId.ProgrammaticName);
-            Parallel.ForEach(_bars.ToList(), trayWnd => 
+            Parallel.ForEach(_bars.ToList(), trayWnd =>
             {
                 if (_positionThreads[trayWnd].IsCompleted)
                 {
@@ -282,7 +324,7 @@ namespace CenterTaskbar
 
         private void LoopForPosition(object trayWndObj)
         {
-            var trayWnd = (AutomationElement) trayWndObj;
+            var trayWnd = (AutomationElement)trayWndObj;
             var numberOfLoops = _activeFramerate / 10;
             var keepGoing = 0;
             while (keepGoing < numberOfLoops)
@@ -314,13 +356,13 @@ namespace CenterTaskbar
             var lastChildPos = horizontal ? last.Current.BoundingRectangle.Left : last.Current.BoundingRectangle.Top;
             Debug.WriteLine("Last child position: " + lastChildPos);
 
-            if (_lasts.ContainsKey(trayWnd) && lastChildPos == _lasts[trayWnd])
+            if (_lasts.ContainsKey(trayWnd) && lastChildPos == _lasts[trayWnd] && !_targetPosOffsetChanged)
             {
-                Debug.WriteLine("Size/location unchanged, sleeping");
+                Debug.WriteLine("Size/location/targetPosOffset unchanged, sleeping");
                 return false;
             }
 
-            Debug.WriteLine("Size/location changed, recalculating center");
+            Debug.WriteLine("Size/location/targetPosOffset changed, recalculating center");
             _lasts[trayWnd] = lastChildPos;
 
             var first = TreeWalker.ControlViewWalker.GetFirstChild(taskList);
@@ -334,8 +376,8 @@ namespace CenterTaskbar
                 ? last.Current.BoundingRectangle.Height / trayBounds.Height
                 : last.Current.BoundingRectangle.Width / trayBounds.Width;
             Debug.WriteLine("UI Scale: " + scale);
-            var size = (lastChildPos - (horizontal 
-                            ? first.Current.BoundingRectangle.Left 
+            var size = (lastChildPos - (horizontal
+                            ? first.Current.BoundingRectangle.Left
                             : first.Current.BoundingRectangle.Top)
                         ) / scale;
             if (size < 0)
@@ -354,7 +396,8 @@ namespace CenterTaskbar
             var taskListBounds = taskList.Current.BoundingRectangle;
 
             var barSize = horizontal ? trayWnd.Cached.BoundingRectangle.Width : trayWnd.Cached.BoundingRectangle.Height;
-            var targetPos = Math.Round((barSize - size) / 2) + (horizontal ? trayBounds.X : trayBounds.Y);
+            var targetPos = Math.Round((barSize - size) / 2) + (horizontal ? trayBounds.X : trayBounds.Y) + _targetPosOffset;
+            _targetPosOffsetChanged = false;
 
             Debug.Write("Bar size: ");
             Debug.WriteLine(barSize);
@@ -392,7 +435,7 @@ namespace CenterTaskbar
                 return true;
             }
 
-            var taskListPtr = (IntPtr) taskList.Current.NativeWindowHandle;
+            var taskListPtr = (IntPtr)taskList.Current.NativeWindowHandle;
 
             if (horizontal)
             {
@@ -430,7 +473,7 @@ namespace CenterTaskbar
                 newPos = 0;
             }
 
-            return (int) newPos;
+            return (int)newPos;
         }
 
         private static int SideBoundary(bool left, bool horizontal, AutomationElement element)
@@ -464,7 +507,7 @@ namespace CenterTaskbar
             else
                 Debug.WriteLine((left ? "Top" : "Bottom") + " side boundary calculated at " + adjustment);
 
-            return (int) adjustment;
+            return (int)adjustment;
         }
 
         // Protected implementation of Dispose pattern.
@@ -480,7 +523,7 @@ namespace CenterTaskbar
                 {
                     foreach (var taskBar in _children)
                     {
-                        Automation.RemoveAutomationPropertyChangedEventHandler(taskBar.Value, _propChangeHandler); 
+                        Automation.RemoveAutomationPropertyChangedEventHandler(taskBar.Value, _propChangeHandler);
                     }
 
                     Automation.RemoveAutomationEventHandler(WindowPattern.WindowOpenedEvent, Desktop, _uiaEventHandler);
